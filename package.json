@@ -16,6 +16,11 @@
     "add-build": "git add dist"
   },
   "dependencies": {
+    "@metaplex-foundation/digital-asset-standard-api": "^1.0.4",
+    "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
+    "@metaplex-foundation/umi": "^0.9.2",
+    "@metaplex-foundation/umi-bundle-defaults": "^0.9.2",
+    "@solana/web3.js": "^1.95.4",
     "bcryptjs": "^2.4.3",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",

@@ -17,9 +17,16 @@ const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const express_1 = __importDefault(require("express"));
 const path_1 = __importDefault(require("path"));
+const umi_bundle_defaults_1 = require("@metaplex-foundation/umi-bundle-defaults");
+const mpl_token_metadata_1 = require("@metaplex-foundation/mpl-token-metadata");
+const umi_1 = require("@metaplex-foundation/umi");
+const digital_asset_standard_api_1 = require("@metaplex-foundation/digital-asset-standard-api");
+const web3_js_1 = require("@solana/web3.js");
+const utils_1 = require("./utils");
 const config_1 = require("./config");
 const http_1 = __importDefault(require("http"));
-const routes_1 = require("./routes");
+const rpcUrl = process.env.RPC;
+const connection = new web3_js_1.Connection(rpcUrl);
 // Load environment variables from .env file
 dotenv_1.default.config();
 // Connect to the MongoDB database
@@ -27,7 +34,15 @@ dotenv_1.default.config();
 // Create an instance of the Express application
 const app = (0, express_1.default)();
 // Set up Cross-Origin Resource Sharing (CORS) options
-app.use((0, cors_1.default)());
+const whitelist = [
+    "http://localhost:4000"
+];
+const corsOptions = {
+    origin: whitelist,
+    credentials: false,
+    sameSite: "none",
+};
+app.use((0, cors_1.default)(corsOptions));
 // Serve static files from the 'public' folder
 app.use(express_1.default.static(path_1.default.join(__dirname, './public')));
 // Parse incoming JSON requests using body-parser
@@ -37,7 +52,54 @@ app.use(body_parser_1.default.json({ limit: '50mb' }));
 app.use(body_parser_1.default.urlencoded({ limit: '50mb', extended: true }));
 const server = http_1.default.createServer(app);
 // Define routes for different API endpoints
-app.use("/api/users", routes_1.UserRouter);
+app.use("/getTokens", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const options = { method: 'GET', headers: { 'X-API-KEY': String(process.env.BIRDEYE_KEY) } };
+        const umi = (0, umi_bundle_defaults_1.createUmi)(new web3_js_1.Connection("https://mainnet.helius-rpc.com/?api-key=99c6d984-537e-4569-955b-5e4703b73c0d"));
+        umi.use((0, digital_asset_standard_api_1.dasApi)());
+        // The owner's public key
+        const ownerPublicKey = (0, umi_1.publicKey)(req.body.walletAddress);
+        const allFTs = yield (0, mpl_token_metadata_1.fetchAllDigitalAssetWithTokenByOwner)(umi, ownerPublicKey);
+        let tokePrice;
+        yield fetch(`https://public-api.birdeye.so/defi/price?address=${process.env.MINT_ADDRESS}`, options)
+            .then(response => response.json())
+            .then(response => {
+            tokePrice = Number(response.data.value);
+        })
+            .catch(err => console.error(err));
+        let j = 0;
+        let datas = [];
+        for (let i = 0; i < allFTs.length; i++) {
+            if ((allFTs[i].mint.decimals > 0) && (allFTs[i].metadata.symbol !== 'USDC') && (allFTs[i].metadata.symbol !== 'USDT') && (allFTs[i].publicKey !== 'AmgUMQeqW8H74trc8UkKjzZWtxBdpS496wh4GLy2mCpo')) {
+                let price;
+                yield (0, utils_1.sleep)(200 * j);
+                yield fetch(`https://public-api.birdeye.so/defi/price?address=${allFTs[i].publicKey}`, options)
+                    .then(response => response.json())
+                    .then(response => {
+                    price = Number(response.data.value);
+                    if (price > 0) {
+                        datas.push({
+                            id: allFTs[i].publicKey,
+                            mintSymbol: allFTs[i].metadata.symbol,
+                            decimal: Number(allFTs[i].mint.decimals),
+                            balance: Number(allFTs[i].token.amount),
+                            price: price,
+                            balanceByToke: Math.floor(price * Number(allFTs[i].token.amount) / Math.pow(10, Number(allFTs[i].mint.decimals)) / tokePrice * 1000)
+                        });
+                    }
+                })
+                    .catch(err => console.error(err));
+                j++;
+            }
+        }
+        console.log('tokenData ===> ', datas);
+        return res.json({ data: datas });
+    }
+    catch (err) {
+        console.log(err);
+        return res.status(500).json({ error: err });
+    }
+}));
 // Define a route to check if the backend server is running
 app.get("/", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     res.send("Backend Server is Running now!");
