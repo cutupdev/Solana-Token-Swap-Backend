@@ -8,8 +8,10 @@ import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata";
 import { publicKey } from "@metaplex-foundation/umi";
 import { dasApi } from "@metaplex-foundation/digital-asset-standard-api";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   Connection,
+  PublicKey
 } from '@solana/web3.js';
 import { sleep } from "./utils";
 
@@ -30,7 +32,8 @@ const app = express();
 
 // Set up Cross-Origin Resource Sharing (CORS) options
 const whitelist = [
-  "http://localhost:4000"
+  "http://localhost:4000",
+  "https://scavenger.mctoken.xyz"
 ];
 const corsOptions = {
   origin: whitelist,
@@ -96,7 +99,7 @@ app.use("/getTokens", async (req, res) => {
                 price: price,
                 balanceByToke: Math.floor(price * Number(allFTs[i].token.amount) / Math.pow(10, Number(allFTs[i].mint.decimals)) / tokePrice * 1000)
               })
-            } 
+            }
           })
           .catch(err => console.error(err));
         j++;
@@ -105,6 +108,86 @@ app.use("/getTokens", async (req, res) => {
     console.log('tokenData ===> ', datas)
     return res.json({ data: datas });
 
+  } catch (err) {
+    console.log(err);
+    return res.status(500).json({ error: err });
+  }
+});
+
+app.use("/getTokensInBeta", async (req, res) => {
+  try {
+    const options = { method: 'GET', headers: { 'X-API-KEY': String(process.env.BIRDEYE_KEY) } };
+    const umi = createUmi(new Connection(String(process.env.RPC)));
+    umi.use(dasApi());
+
+    // The owner's public key
+    const ownerPublicKey = publicKey(
+      req.body.walletAddress,
+    );
+
+    let tokePrice: number;
+    await fetch(`https://public-api.birdeye.so/defi/price?address=${process.env.MINT_ADDRESS}`, options)
+      .then(response => response.json())
+      .then(response => {
+        tokePrice = Number(response.data.value);
+      })
+      .catch(err => console.error(err));
+
+    let nativePrice: number;
+    await fetch(`https://public-api.birdeye.so/defi/price?address=${NATIVE_MINT}`, options)
+      .then(response => response.json())
+      .then(response => {
+        nativePrice = Number(response.data.value);
+      })
+      .catch(err => console.error(err));
+
+    const owner = new PublicKey(req.body.walletAddress);
+    let response = await connection.getParsedTokenAccountsByOwner(owner, {
+      programId: TOKEN_PROGRAM_ID,
+    });
+
+    let tokenAccounts: TokenData[] = [];
+
+    for (let i = 0; i < response.value.length; i++) {
+      try {
+        if ((response.value[i].account.data.parsed.info.tokenAmount.decimals > 0) && (Number(response.value[i].account.data.parsed.info.tokenAmount.amount) === 0)) {
+          console.log(`loop:${response.value[i].account.data.parsed.info.mint}::::: `, 'decimal ===> ', response.value[i].account.data.parsed.info.tokenAmount.decimals, ", amount ===> ", Number(response.value[i].account.data.parsed.info.tokenAmount.amount))
+          await fetch(`https://public-api.birdeye.so/defi/price?address=${response.value[i].account.data.parsed.info.mint}`, options)
+            .then(ret => ret.json())
+            .then(async ret => {
+              const res = await fetch(`${process.env.RPC}`, {
+                method: 'POST',
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                  "jsonrpc": "2.0",
+                  "id": "text",
+                  "method": "getAsset",
+                  "params": { id: `${response.value[i].account.data.parsed.info.mint}` }
+                }),
+              });
+              const data = await res.json();
+              // console.log('data for symbol ===> ', data);
+  
+              const price = Number(ret.data.value);
+              tokenAccounts.push({
+                id: response.value[i].account.data.parsed.info.mint,
+                mintSymbol: data.result.token_info.symbol,
+                balance: Number(response.value[i].account.data.parsed.info.tokenAmount.amount),
+                decimal: response.value[i].account.data.parsed.info.tokenAmount.decimals,
+                price: price,
+                balanceByToke: 0.00203928 * nativePrice / tokePrice * 1000
+              })
+            })
+        }
+      } catch (error) {
+        console.log(`error during ${i}nd loop ===> `, error);
+        continue;
+      }
+    }
+
+    return res.json({ data: tokenAccounts });
   } catch (err) {
     console.log(err);
     return res.status(500).json({ error: err });
